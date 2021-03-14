@@ -13,6 +13,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 contract IMediaModified {
     mapping(uint256 => address) public tokenCreators;
+    address public marketContract;
 }
 
 contract ReserveAuction is Ownable, ReentrancyGuard {
@@ -117,7 +118,8 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
             "Must send reservePrice or more"
         );
         require(
-            block.timestamp <
+            auctions[tokenId].firstBidTime == 0 ||
+                block.timestamp <
                 auctions[tokenId].firstBidTime + auctions[tokenId].duration,
             "Auction expired"
         );
@@ -140,7 +142,10 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         }
 
         require(
-            IMarket(zora).isValidBid(tokenId, msg.value),
+            IMarket(IMediaModified(zora).marketContract()).isValidBid(
+                tokenId,
+                msg.value
+            ),
             "Market: Ask invalid for share splitting"
         );
 
@@ -195,14 +200,20 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
 
         // compiler error here:
         IMarket.BidShares memory bidShares =
-            IMarket(zora).bidSharesForToken(tokenId);
+            IMarket(IMediaModified(zora).marketContract()).bidSharesForToken(
+                tokenId
+            );
 
         // solc 6.0 method for casting payable addresses:
         address payable originalCreator =
             payable(address(IMediaModified(zora).tokenCreators(tokenId)));
 
         uint256 creatorAmount =
-            IMarket(zora).splitShare(bidShares.creator, amount);
+            IMarket(IMediaModified(zora).marketContract()).splitShare(
+                bidShares.creator,
+                amount
+            );
+
         uint256 sellerAmount = amount.sub(creatorAmount);
 
         originalCreator.transfer(creatorAmount);
