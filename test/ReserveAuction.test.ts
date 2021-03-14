@@ -31,6 +31,7 @@ import {
 } from 'ethers/lib/utils';
 import exp from 'constants';
 import { Market } from '../typechain';
+import { isRegExp } from 'util';
 
 chai.use(asPromised);
 
@@ -310,6 +311,13 @@ describe('ReserveAuction', () => {
       ).rejected
     })
 
+  })
+
+  describe('#createBid mundane', () => {
+      beforeEach(async () => {
+        await deploy();
+      });
+
     it('can\'t submit an auction that already exists', async () => {
 
       const tokenId = await mintToken();
@@ -339,14 +347,235 @@ describe('ReserveAuction', () => {
 
     })
 
+    it(`can't bid after auction is expired`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+      const auctionAsOther = await auctionAs(otherWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice})
+      blockchain.increaseTimeAsync(duration)
+      await expect(
+        auctionAsOther.createBid(tokenId, {value: reservePrice.mul(2)})
+      ).rejectedWith('Auction expired')
+    })
+
+    it(`can't bid less than the last bid`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+      const auctionAsOther = await auctionAs(otherWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice.mul(3)})
+      await expect(
+        auctionAsOther.createBid(tokenId, {value: reservePrice.mul(2)})
+      ).rejectedWith('Must send more than last bid')
+    })
+
+    it(`can't increment bid by less than minBid amount`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+      const auctionAsOther = await auctionAs(otherWallet)
+
+      const minBid = await auctionAsBidder.minBid()
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice})
+      await expect(
+        auctionAsBidder.createBid(tokenId, {value: reservePrice.add(minBid.sub(1))})
+      ).rejectedWith(`Must send more than last bid by minBid Amount`)
+    })
+
+    it(`should extend auction by timebuffer when bid made during timebuffer`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+      const auctionAsOther = await auctionAs(otherWallet)
+
+      const minBid = await auctionAsBidder.minBid()
+      const timeBuffer = await auctionAsBidder.timeBuffer()
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice})
+
+      const auctionBefore = await auctionAsBidder.auctions(tokenId)
+      const durationBefore = auctionBefore.duration
+
+      const blockBefore = await provider.getBlock(await provider.getBlockNumber())
+      const timeBefore = blockBefore.timestamp
+
+      await blockchain.increaseTimeAsync(BigNumber.from(duration).sub(timeBuffer).add(1).toNumber())
+      await blockchain.waitBlocksAsync(1)
+
+      const blockAfter = await provider.getBlock(await provider.getBlockNumber())
+      const timeAfter = blockAfter.timestamp
+
+      expect(timeAfter - timeBefore).eq(BigNumber.from(duration).sub(timeBuffer).add(1).toNumber())
+
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice.mul(2)})
+
+      const auctionAfter = await auctionAsBidder.auctions(tokenId)
+      const durationAfter = auctionAfter.duration
+
+      expect(durationAfter.sub(durationBefore).toString()).eq(timeBuffer.toString())
+
+    })
   })
 
-  describe.skip('#auction happy trail', () => {
+
+  describe('#endAuction mundane', () => {
     beforeEach(async () => {
       await deploy();
     });
 
-    it.skip('should work when seller is creator of NFT', async () => {
+    it(`can't submit an auction that doesn't exist`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice})
+
+      await blockchain.increaseTimeAsync(BigNumber.from(duration).add(1).toNumber())
+      await blockchain.waitBlocksAsync(1)
+
+      await expect(
+        auctionAsBidder.endAuction(666)
+      ).rejectedWith(`Auction doesn't exist`)
+    })
+
+    it(`can't end an auction that hasn't begun`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+
+      await expect(
+        auctionAsBidder.endAuction(tokenId)
+      ).rejectedWith(`Auction hasn't begun`)
+
+    })
+
+    it(`can't end an auction that hasn't completed`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice})
+
+      await expect(
+        auctionAsBidder.endAuction(tokenId)
+      ).rejectedWith(`Auction hasn't completed`)
+
+      await blockchain.increaseTimeAsync(BigNumber.from(duration).sub(1).toNumber())
+      await blockchain.waitBlocksAsync(1)
+
+      await expect(
+        auctionAsBidder.endAuction(tokenId)
+      ).rejectedWith(`Auction hasn't completed`)
+
+    })
+
+  })
+
+
+
+  describe('#cancelAuction mundane', () => {
+    beforeEach(async () => {
+      await deploy();
+    });
+
+    it(`can't submit an auction that doesn't exist`, async () => {
+      const auctionAsBidder = await auctionAs(bidderWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice})
+
+      await blockchain.increaseTimeAsync(BigNumber.from(duration).add(1).toNumber())
+      await blockchain.waitBlocksAsync(1)
+
+      await expect(
+        auctionAsBidder.cancelAuction(666)
+      ).rejectedWith(`Auction doesn't exist`)
+    })
+
+    it(`can't cancel an auction if you're not the creator or owner`, async () => {
+      const auctionAsOther = await auctionAs(otherWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+
+      await expect(
+        auctionAsOther.cancelAuction(tokenId)
+      ).rejectedWith(`Can only be called by auction creator or owner`)
+    })
+
+    it(`can cancel an auction if you're the creator `, async () => {
+      const auctionAsCreator = await auctionAs(creatorWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+
+      await expect(
+        auctionAsCreator.cancelAuction(tokenId)
+      ).fulfilled
+    })
+
+    it(`can cancel an auction if you're the owner `, async () => {
+      const auctionAsDeployer = await auctionAs(deployerWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+
+      await expect(
+        auctionAsDeployer.cancelAuction(tokenId)
+      ).fulfilled
+    })
+
+    it(`can't cancel an auction once it's begun`, async () => {
+      const auctionAsDeployer = await auctionAs(deployerWallet)
+
+      const auctionAsBidder = await auctionAs(bidderWallet)
+
+      const tokenId = await mintToken();
+      await setupAuction(tokenId, creatorWallet);
+      await auctionAsBidder.createBid(tokenId, {value: reservePrice})
+
+      await expect(
+        auctionAsDeployer.cancelAuction(tokenId)
+      ).rejectedWith(`Can't cancel an auction once it's begun`)
+    })
+
+    it(`can cancel an auction and transfer the token back and delete the auction`, async () => {
+      const tokenAsCreator = await tokenAs(creatorWallet)
+      const auctionAsDeployer = await auctionAs(deployerWallet)
+
+      const tokenId = await mintToken();
+      const ownerBefore = await tokenAsCreator.ownerOf(tokenId)
+      await setupAuction(tokenId, creatorWallet);
+
+      const ownerInBetween = await tokenAsCreator.ownerOf(tokenId)
+      expect(ownerBefore).not.eq(ownerInBetween)
+
+      const auctionBefore = await auctionAsDeployer.auctions(tokenId)
+      expect(auctionBefore.exists).eq(true)
+
+      await auctionAsDeployer.cancelAuction(tokenId)
+      const ownerAfter = await tokenAsCreator.ownerOf(tokenId)
+      expect(ownerBefore).eq(ownerAfter)
+
+      const auctionAfter = await auctionAsDeployer.auctions(tokenId)
+      expect(auctionAfter.exists).eq(false)
+
+    })
+
+  })
+
+  describe('#auction happy trail', () => {
+    beforeEach(async () => {
+      await deploy();
+    });
+
+    it('should work when seller is creator of NFT', async () => {
       const token = await tokenAs(creatorWallet);
       const auctionAsBidder = await auctionAs(bidderWallet)
 
@@ -400,7 +629,7 @@ describe('ReserveAuction', () => {
 
     });
 
-    it.skip('should work when seller is not creator of NFT', async () => {
+    it('should work when seller is not creator of NFT', async () => {
       const market = await marketAs(creatorWallet);
       const token = await tokenAs(creatorWallet);
       const auctionAsBidder = await auctionAs(bidderWallet)

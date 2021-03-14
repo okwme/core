@@ -21,8 +21,8 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
 
     bool public paused;
 
-    uint256 constant timeBuffer = 15 * 60; // extend 15 minutes after every bid made in last 15 minutes
-    uint256 constant minBid = 1 * 10**17; // 0.1 eth
+    uint256 public timeBuffer = 15 * 60; // extend 15 minutes after every bid made in last 15 minutes
+    uint256 public minBid = 1 * 10**17; // 0.1 eth
 
     bytes4 constant interfaceId = 0x80ac58cd; // 721 interface id
     address public zora = 0xabEFBc9fD2F806065b4f3C237d4b59D9A97Bcac7;
@@ -91,6 +91,14 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         zora = _zora;
     }
 
+    function updateMinBid(uint256 _minBid) public onlyOwner {
+        minBid = _minBid;
+    }
+
+    function updateTimeBuffer(uint256 _timeBuffer) public onlyOwner {
+        timeBuffer = _timeBuffer;
+    }
+
     function createAuction(
         uint256 tokenId,
         uint256 duration,
@@ -131,6 +139,7 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
 
         // allows for auctions with starting price of 0
         if (lastValue != 0) {
+            require(msg.value > lastValue, "Must send more than last bid");
             require(
                 msg.value.sub(lastValue) >= minBid,
                 "Must send more than last bid by minBid Amount"
@@ -153,12 +162,14 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         auctions[tokenId].bidder = msg.sender;
 
         bool extended;
+        // at this point we know that the timestamp is less than start + duration
+        // we want to know by how much the timestamp is less than start + duration
+        // if the difference is less than the timeBuffer, increase the duration by the timeBuffer
         if (
-            (block.timestamp -
-                (auctions[tokenId].firstBidTime + auctions[tokenId].duration)) <
-            timeBuffer
+            (auctions[tokenId].firstBidTime.add(auctions[tokenId].duration))
+                .sub(block.timestamp) < timeBuffer
         ) {
-            auctions[tokenId].firstBidTime += timeBuffer;
+            auctions[tokenId].duration += timeBuffer;
             extended = true;
         }
 
@@ -198,7 +209,6 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
 
         IERC721(zora).transferFrom(address(this), winner, tokenId);
 
-        // compiler error here:
         IMarket.BidShares memory bidShares =
             IMarket(IMediaModified(zora).marketContract()).bidSharesForToken(
                 tokenId
@@ -224,7 +234,7 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         require(auctions[tokenId].exists, "Auction doesn't exist");
         require(
             auctions[tokenId].creator == msg.sender || msg.sender == owner(),
-            "Can only be called by auction creator"
+            "Can only be called by auction creator or owner"
         );
         require(
             uint256(auctions[tokenId].firstBidTime) == 0,
