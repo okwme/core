@@ -123,7 +123,7 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         uint256 duration,
         uint256 reservePrice,
         address payable creator
-    ) external notPaused {
+    ) external notPaused nonReentrant {
         require(!auctions[tokenId].exists, "Auction already exists");
 
         tokenIds.push(tokenId);
@@ -138,7 +138,12 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         emit AuctionCreated(tokenId, zora, duration, reservePrice, creator);
     }
 
-    function createBid(uint256 tokenId) external payable notPaused {
+    function createBid(uint256 tokenId)
+        external
+        payable
+        notPaused
+        nonReentrant
+    {
         require(auctions[tokenId].exists, "Auction doesn't exist");
         require(
             msg.value >= auctions[tokenId].reservePrice,
@@ -153,8 +158,8 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
 
         uint256 lastValue = auctions[tokenId].amount;
 
-        bool firstBid;
-        address payable lastBidder;
+        bool firstBid = false;
+        address payable lastBidder = address(0);
 
         // allows for auctions with starting price of 0
         if (lastValue != 0) {
@@ -180,7 +185,7 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         auctions[tokenId].amount = msg.value;
         auctions[tokenId].bidder = msg.sender;
 
-        bool extended;
+        bool extended = false;
         // at this point we know that the timestamp is less than start + duration
         // we want to know by how much the timestamp is less than start + duration
         // if the difference is less than the timeBuffer, increase the duration by the timeBuffer
@@ -192,10 +197,6 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
             extended = true;
         }
 
-        if (!firstBid) {
-            lastBidder.transfer(lastValue);
-        }
-
         emit AuctionBid(
             tokenId,
             zora,
@@ -205,9 +206,13 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
             firstBid,
             extended
         );
+
+        if (!firstBid) {
+            lastBidder.transfer(lastValue);
+        }
     }
 
-    function endAuction(uint256 tokenId) external notPaused {
+    function endAuction(uint256 tokenId) external notPaused nonReentrant {
         require(auctions[tokenId].exists, "Auction doesn't exist");
         require(
             uint256(auctions[tokenId].firstBidTime) != 0,
@@ -249,7 +254,7 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         creator.transfer(sellerAmount);
     }
 
-    function cancelAuction(uint256 tokenId) external {
+    function cancelAuction(uint256 tokenId) external nonReentrant {
         require(auctions[tokenId].exists, "Auction doesn't exist");
         require(
             auctions[tokenId].creator == msg.sender || msg.sender == owner(),
@@ -260,9 +265,9 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
             "Can't cancel an auction once it's begun"
         );
         address creator = auctions[tokenId].creator;
+        delete auctions[tokenId];
         IERC721(zora).transferFrom(address(this), creator, tokenId);
         emit AuctionCanceled(tokenId, zora, creator);
-        delete auctions[tokenId];
     }
 
     function updatePaused(bool _paused) public onlyOwner {
