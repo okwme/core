@@ -213,7 +213,10 @@ contract ReserveAuction is Ownable, ReentrancyGuard {
         );
 
         if (!firstBid) {
-            lastBidder.transfer(lastValue);
+            // in case the bidder is a contract that doesn't allow receiving
+            if (!lastBidder.send(lastValue)) {
+                auctions[tokenId].creator.transfer(lastValue);
+            }
         }
     }
 
